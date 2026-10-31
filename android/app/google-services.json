@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "666045087812",
+    "project_id": "telegramcloud-b64d3",
+    "storage_bucket": "telegramcloud-b64d3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666045087812:android:774d39045126bd78083c11",
+        "android_client_info": {
+          "package_name": "com.example.terabox_telegram_cloud"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "666045087812-7g6di7f7gtc163ku6tnn9e19ik02qcco.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.terabox_telegram_cloud",
+            "certificate_hash": "2397c20ebc0bb84d6744180c9a347896e0f279ef"
+          }
+        },
+        {
+          "client_id": "666045087812-gqf3tl20drqovrb5me5ugnn3qkeoc257.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQ1SS5p1nD4blSsbeOdqoCvLYlxXj3Imc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "666045087812-gqf3tl20drqovrb5me5ugnn3qkeoc257.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}   
