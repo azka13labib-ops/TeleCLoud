@@ -1,0 +1,343 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+// ignore: depend_on_referenced_packages — general_lib is a transitive dep of telegram_client
+import 'package:general_lib/general_lib.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:telegram_client/telegram_client.dart';
+
+/// Enum representing the current authorization state of Telegram TDLib
+enum TelegramAuthState {
+  uninitialized,
+  waitingParameters,
+  waitingPhoneNumber,
+  waitingCode,
+  waitingPassword,
+  ready,
+  loggingOut,
+  closed,
+  error,
+}
+
+/// Service managing the low-level TDLib client for Telegram MTProto.
+/// Handles session persistence, TDLib parameters, and authorization updates.
+class TelegramService {
+  TelegramService._();
+  static final TelegramService instance = TelegramService._();
+
+  // TDLib API Credentials - Obtain yours from https://my.telegram.org
+  static const int apiId = 0000000; // PLACEHOLDER: Replace with your actual api_id
+  static const String apiHash = 'YOUR_API_HASH_HERE'; // PLACEHOLDER: Replace with your actual api_hash
+
+  late final Tdlib _tdlib;
+  late final int _clientId;
+
+  TelegramAuthState _currentState = TelegramAuthState.uninitialized;
+  int? _vaultChannelId;
+
+  EventEmitterListener? _updateListener;
+  final StreamController<TelegramAuthState> _authStateController =
+      StreamController<TelegramAuthState>.broadcast();
+
+  bool _isInitialized = false;
+
+  /// Exposes the authorization state updates stream for UI consumers
+  Stream<TelegramAuthState> get onAuthStateChanged => _authStateController.stream;
+  TelegramAuthState get currentState => _currentState;
+  int get clientId => _clientId;
+  Tdlib get tdlib => _tdlib;
+  int? get vaultChannelId => _vaultChannelId;
+  bool get isInitialized => _isInitialized;
+
+  /// Initializes TDLib instance, local database/file storage directories, and authorization stream
+  Future<void> initialize() async {
+    if (_isInitialized) return;
+
+    try {
+      debugPrint('[TelegramService] Initializing TDLib MTProto client...');
+
+      _tdlib = Tdlib();
+      _clientId = _tdlib.td_create_client_id();
+
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final tdlibBaseDir = Directory(p.join(appDocDir.path, 'telegram_cloud_vault'));
+
+      final dbDirectory = Directory(p.join(tdlibBaseDir.path, 'tdlib_db'));
+      final filesDirectory = Directory(p.join(tdlibBaseDir.path, 'tdlib_files'));
+
+      if (!await dbDirectory.exists()) {
+        await dbDirectory.create(recursive: true);
+      }
+      if (!await filesDirectory.exists()) {
+        await filesDirectory.create(recursive: true);
+      }
+
+      _setupUpdateListener(
+        databaseDirectory: dbDirectory.path,
+        filesDirectory: filesDirectory.path,
+      );
+
+      _isInitialized = true;
+      debugPrint('[TelegramService] TDLib client initialized. Client ID: $_clientId');
+    } catch (e, stackTrace) {
+      debugPrint('[TelegramService] Error initializing TDLib: $e\n$stackTrace');
+      _setState(TelegramAuthState.error);
+      rethrow;
+    }
+  }
+
+  void _setState(TelegramAuthState state) {
+    _currentState = state;
+    _authStateController.add(state);
+  }
+
+  /// Sets up event listening loop from TDLib client
+  void _setupUpdateListener({
+    required String databaseDirectory,
+    required String filesDirectory,
+  }) {
+    _updateListener = _tdlib.on(
+      _tdlib.event_update,
+      (UpdateTelegramClientTdlib updateTd) async {
+        try {
+          final Map<dynamic, dynamic> update = updateTd.update;
+          final String? type = update['@type'] as String?;
+          if (type == null) return;
+
+          switch (type) {
+            case 'updateAuthorizationState':
+              await _handleAuthorizationState(
+                update['authorization_state'] as Map<dynamic, dynamic>?,
+                databaseDirectory: databaseDirectory,
+                filesDirectory: filesDirectory,
+              );
+              break;
+
+            case 'updateConnectionState':
+              final connectionState = update['state']?['@type'];
+              debugPrint('[TelegramService] Connection State: $connectionState');
+              break;
+
+            default:
+              break;
+          }
+        } catch (err, stack) {
+          debugPrint('[TelegramService] Error processing update: $err\n$stack');
+        }
+      },
+      onError: (Object error) {
+        debugPrint('[TelegramService] Stream error encountered: $error');
+      },
+    );
+  }
+
+  /// Handles incoming authorization steps and supplies TdlibParameters when requested
+  Future<void> _handleAuthorizationState(
+    Map<dynamic, dynamic>? authState, {
+    required String databaseDirectory,
+    required String filesDirectory,
+  }) async {
+    if (authState == null) return;
+
+    final String? stateType = authState['@type'] as String?;
+    debugPrint('[TelegramService] UpdateAuthorizationState: $stateType');
+
+    switch (stateType) {
+      case 'authorizationStateWaitTdlibParameters':
+        _setState(TelegramAuthState.waitingParameters);
+        await _sendTdlibParameters(
+          databaseDirectory: databaseDirectory,
+          filesDirectory: filesDirectory,
+        );
+        break;
+
+      case 'authorizationStateWaitPhoneNumber':
+        _setState(TelegramAuthState.waitingPhoneNumber);
+        break;
+
+      case 'authorizationStateWaitCode':
+        _setState(TelegramAuthState.waitingCode);
+        break;
+
+      case 'authorizationStateWaitPassword':
+        _setState(TelegramAuthState.waitingPassword);
+        break;
+
+      case 'authorizationStateReady':
+        _setState(TelegramAuthState.ready);
+        debugPrint('[TelegramService] TDLib authorization state READY. 2GB transfer vault unlocked!');
+        await _findOrCreateVaultChannel();
+        break;
+
+      case 'authorizationStateLoggingOut':
+        _setState(TelegramAuthState.loggingOut);
+        break;
+
+      case 'authorizationStateClosing':
+      case 'authorizationStateClosed':
+        _setState(TelegramAuthState.closed);
+        break;
+
+      default:
+        debugPrint('[TelegramService] Unhandled auth state: $stateType');
+        break;
+    }
+  }
+
+  /// Sends TdlibParameters to configure local databases, MTProto credentials, and encryption
+  Future<void> _sendTdlibParameters({
+    required String databaseDirectory,
+    required String filesDirectory,
+  }) async {
+    try {
+      debugPrint('[TelegramService] Sending TdlibParameters...');
+
+      final Map<String, dynamic> parameters = {
+        'database_directory': databaseDirectory,
+        'files_directory': filesDirectory,
+        'use_file_database': true,
+        'use_chat_info_database': true,
+        'use_message_database': true,
+        'use_secret_chats': false,
+        'api_id': apiId,
+        'api_hash': apiHash,
+        'system_language_code': 'en',
+        'device_model': Platform.operatingSystem,
+        'system_version': Platform.operatingSystemVersion,
+        'application_version': '1.0.0',
+        'enable_storage_optimizer': true,
+      };
+
+      final response = await _tdlib.invoke(
+        'setTdlibParameters',
+        parameters: parameters,
+        clientId: _clientId,
+      );
+
+      debugPrint('[TelegramService] setTdlibParameters result: $response');
+    } catch (e, stackTrace) {
+      debugPrint('[TelegramService] Failed to set TdlibParameters: $e\n$stackTrace');
+    }
+  }
+
+  // --- Telegram MTProto Auth Actions ---
+
+  /// Submits phone number to request OTP code
+  Future<Map> sendPhoneNumber(String phoneNumber) async {
+    try {
+      debugPrint('[TelegramService] Sending phone number: $phoneNumber');
+      final result = await _tdlib.invoke(
+        'setAuthenticationPhoneNumber',
+        parameters: {
+          'phone_number': phoneNumber.replaceAll(' ', '').trim(),
+        },
+        clientId: _clientId,
+      );
+      return result;
+    } catch (e) {
+      debugPrint('[TelegramService] Error sending phone number: $e');
+      rethrow;
+    }
+  }
+
+  /// Submits verification OTP code sent to user Telegram account
+  Future<Map> checkAuthenticationCode(String code) async {
+    try {
+      debugPrint('[TelegramService] Checking authentication code...');
+      final result = await _tdlib.invoke(
+        'checkAuthenticationCode',
+        parameters: {
+          'code': code.trim(),
+        },
+        clientId: _clientId,
+      );
+      return result;
+    } catch (e) {
+      debugPrint('[TelegramService] Error verifying auth code: $e');
+      rethrow;
+    }
+  }
+
+  /// Submits 2-Factor Authentication Password (if enabled)
+  Future<Map> checkAuthenticationPassword(String password) async {
+    try {
+      debugPrint('[TelegramService] Checking 2FA password...');
+      final result = await _tdlib.invoke(
+        'checkAuthenticationPassword',
+        parameters: {
+          'password': password,
+        },
+        clientId: _clientId,
+      );
+      return result;
+    } catch (e) {
+      debugPrint('[TelegramService] Error verifying 2FA password: $e');
+      rethrow;
+    }
+  }
+
+  /// Log out from TDLib
+  Future<void> logOut() async {
+    try {
+      await _tdlib.invoke('logOut', clientId: _clientId);
+    } catch (e) {
+      debugPrint('[TelegramService] Error logging out: $e');
+    }
+  }
+
+  // --- Private Channel Vault Management ---
+
+  /// Finds existing "Cloud Vault" channel or creates a new Private Supergroup/Channel
+  Future<int?> _findOrCreateVaultChannel() async {
+    try {
+      debugPrint('[TelegramService] Searching for Personal Cloud Vault channel...');
+      // 1. Query user chats
+      final getChatsRes = await _tdlib.invoke(
+        'getChats',
+        parameters: {'limit': 50},
+        clientId: _clientId,
+      );
+
+      final chatIds = (getChatsRes['chat_ids'] as List?)?.cast<int>() ?? [];
+      for (final chatId in chatIds) {
+        final chat = await _tdlib.invoke(
+          'getChat',
+          parameters: {'chat_id': chatId},
+          clientId: _clientId,
+        );
+        final title = chat['title'] as String? ?? '';
+        if (title.toLowerCase().contains('cloud vault') || title.toLowerCase().contains('terabox')) {
+          _vaultChannelId = chatId;
+          debugPrint('[TelegramService] Found existing Vault Channel: $_vaultChannelId ($title)');
+          return _vaultChannelId;
+        }
+      }
+
+      // 2. If not found, create a new private supergroup channel
+      debugPrint('[TelegramService] Creating new Private Cloud Vault channel...');
+      final createChannelRes = await _tdlib.invoke(
+        'createNewSupergroupChat',
+        parameters: {
+          'title': 'Personal Cloud Vault',
+          'is_channel': true,
+          'description': 'Private storage vault managed by TeraBox Telegram Cloud app.',
+        },
+        clientId: _clientId,
+      );
+
+      _vaultChannelId = createChannelRes['id'] as int?;
+      debugPrint('[TelegramService] Created new Vault Channel: $_vaultChannelId');
+      return _vaultChannelId;
+    } catch (e) {
+      debugPrint('[TelegramService] Failed to resolve vault channel: $e');
+      return null;
+    }
+  }
+
+  Future<void> dispose() async {
+    _updateListener?.cancel();
+    await _authStateController.close();
+    _isInitialized = false;
+  }
+}
