@@ -393,26 +393,34 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: isTelegramReady ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
-                              ),
+                        InkWell(
+                          onTap: _showTelegramSetup,
+                          borderRadius: BorderRadius.circular(6),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2.0),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isTelegramReady ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  isTelegramReady ? 'Telegram MTProto 2GB Active' : 'Tap to Connect Telegram (2GB)',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: isTelegramReady ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              isTelegramReady ? 'Telegram MTProto Connected' : 'Local Vault (Offline Mode)',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: AppTheme.subtleText,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ],
                     ),

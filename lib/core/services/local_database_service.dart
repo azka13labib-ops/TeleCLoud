@@ -30,6 +30,14 @@ class LocalDatabaseService {
     return await openDatabase(
       dbPath,
       version: _dbVersion,
+      onOpen: (db) async {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          )
+        ''');
+      },
       onCreate: (db, version) async {
         // Table for Folders
         await db.execute('''
@@ -61,6 +69,31 @@ class LocalDatabaseService {
         await db.execute('CREATE INDEX idx_files_folder ON $tableFiles (folder_id, user_id)');
       },
     );
+  }
+
+  // --- Settings / Key-Value Cache Operations ---
+
+  Future<void> setSetting(String key, String value) async {
+    final db = await database;
+    await db.insert(
+      'settings',
+      {'key': key, 'value': value},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getSetting(String key) async {
+    final db = await database;
+    final res = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (res.isNotEmpty) {
+      return res.first['value'] as String?;
+    }
+    return null;
   }
 
   // --- Folder Cache Operations ---

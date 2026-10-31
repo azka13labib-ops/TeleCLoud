@@ -5,7 +5,12 @@ import '../../../shared/widgets/glass_button.dart';
 import '../../../shared/widgets/glass_card.dart';
 import '../../../shared/widgets/glass_text_field.dart';
 
-/// Modal dialog guiding the user through Telegram MTProto setup (Phone -> OTP -> 2FA)
+/// Modal dialog guiding the user through Telegram MTProto setup:
+/// 1. Enter Telegram API Credentials (api_id & api_hash from my.telegram.org)
+/// 2. Submit Phone Number
+/// 3. Enter Official Telegram Verification OTP
+/// 4. Submit 2FA Password (if enabled)
+/// 5. Automatically create/bind "Personal Cloud Vault" channel
 class TelegramAuthModal extends StatefulWidget {
   final VoidCallback onAuthenticated;
 
@@ -20,8 +25,8 @@ class TelegramAuthModal extends StatefulWidget {
   }) {
     return showDialog(
       context: context,
-      barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.75),
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.8),
       builder: (ctx) => TelegramAuthModal(onAuthenticated: onAuthenticated),
     );
   }
@@ -33,6 +38,8 @@ class TelegramAuthModal extends StatefulWidget {
 class _TelegramAuthModalState extends State<TelegramAuthModal> {
   final TelegramService _telegram = TelegramService.instance;
 
+  final TextEditingController _apiIdController = TextEditingController();
+  final TextEditingController _apiHashController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -41,17 +48,58 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
   String? _errorMessage;
 
   @override
+  void initState() {
+    super.initState();
+    if (TelegramService.apiId != 0) {
+      _apiIdController.text = TelegramService.apiId.toString();
+    }
+    if (TelegramService.apiHash.isNotEmpty && TelegramService.apiHash != 'YOUR_API_HASH_HERE') {
+      _apiHashController.text = TelegramService.apiHash;
+    }
+  }
+
+  @override
   void dispose() {
+    _apiIdController.dispose();
+    _apiHashController.dispose();
     _phoneController.dispose();
     _codeController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
+  Future<void> _submitCredentials() async {
+    final idText = _apiIdController.text.trim();
+    final hash = _apiHashController.text.trim();
+
+    final id = int.tryParse(idText);
+    if (id == null || id == 0) {
+      setState(() => _errorMessage = 'Masukkan App api_id berupa angka valid dari my.telegram.org');
+      return;
+    }
+    if (hash.isEmpty) {
+      setState(() => _errorMessage = 'Masukkan App api_hash dari my.telegram.org');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _telegram.updateCredentials(id: id, hash: hash);
+    } catch (e) {
+      setState(() => _errorMessage = 'Gagal menyimpan kredensial: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _submitPhone() async {
     final phone = _phoneController.text.trim();
-    if (phone.isEmpty) {
-      setState(() => _errorMessage = 'Please enter your phone number (+62...)');
+    if (phone.isEmpty || !phone.startsWith('+')) {
+      setState(() => _errorMessage = 'Gunakan format internasional (contoh: +628123456789)');
       return;
     }
 
@@ -63,7 +111,7 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
     try {
       await _telegram.sendPhoneNumber(phone);
     } catch (e) {
-      setState(() => _errorMessage = 'Failed to send phone: $e');
+      setState(() => _errorMessage = 'Gagal mengirim OTP: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -72,7 +120,7 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
   Future<void> _submitCode() async {
     final code = _codeController.text.trim();
     if (code.isEmpty) {
-      setState(() => _errorMessage = 'Please enter verification code');
+      setState(() => _errorMessage = 'Masukkan 5 digit kode verifikasi Telegram');
       return;
     }
 
@@ -84,7 +132,7 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
     try {
       await _telegram.checkAuthenticationCode(code);
     } catch (e) {
-      setState(() => _errorMessage = 'Invalid code: $e');
+      setState(() => _errorMessage = 'Kode verifikasi salah: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -93,7 +141,7 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
   Future<void> _submitPassword() async {
     final password = _passwordController.text;
     if (password.isEmpty) {
-      setState(() => _errorMessage = 'Please enter your 2FA password');
+      setState(() => _errorMessage = 'Masukkan sandi Two-Step Verification Anda');
       return;
     }
 
@@ -105,7 +153,7 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
     try {
       await _telegram.checkAuthenticationPassword(password);
     } catch (e) {
-      setState(() => _errorMessage = 'Invalid password: $e');
+      setState(() => _errorMessage = 'Sandi 2FA tidak cocok: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -116,7 +164,7 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
     return Dialog(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: StreamBuilder<TelegramAuthState>(
         stream: _telegram.onAuthStateChanged,
         initialData: _telegram.currentState,
@@ -132,253 +180,345 @@ class _TelegramAuthModalState extends State<TelegramAuthModal> {
             });
           }
 
-          return GlassCard(
-            blur: 24.0,
-            opacity: 0.12,
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppTheme.accentCyan.withValues(alpha: 0.15),
-                        border: Border.all(
-                          color: AppTheme.accentCyan.withValues(alpha: 0.3),
-                          width: 1.0,
+          return SingleChildScrollView(
+            child: GlassCard(
+              blur: 24.0,
+              opacity: 0.14,
+              padding: const EdgeInsets.all(22.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppTheme.accentCyan.withValues(alpha: 0.15),
+                          border: Border.all(
+                            color: AppTheme.accentCyan.withValues(alpha: 0.3),
+                            width: 1.0,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.cloud_upload_outlined,
+                          color: AppTheme.accentCyan,
+                          size: 22,
                         ),
                       ),
-                      child: const Icon(
-                        Icons.send_rounded,
-                        color: AppTheme.accentCyan,
-                        size: 20,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Telegram MTProto 2GB Vault',
+                              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _getStepSubtitle(state),
+                              style: const TextStyle(
+                                color: AppTheme.subtleText,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      IconButton(
+                        icon: const Icon(Icons.close, color: AppTheme.subtleText, size: 20),
+                        onPressed: () => Navigator.of(context).pop(),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Error notification banner if any
+                  if (_errorMessage != null || _telegram.lastErrorMessage != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.redAccent.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
                         children: [
-                          Text(
-                            'Telegram MTProto Vault',
-                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                  fontSize: 18,
-                                ),
-                          ),
-                          const SizedBox(height: 2),
-                          const Text(
-                            'One-time 2GB storage activation',
-                            style: TextStyle(
-                              color: AppTheme.subtleText,
-                              fontSize: 12,
+                          const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage ?? _telegram.lastErrorMessage ?? '',
+                              style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 20),
 
-                if (_errorMessage != null) ...[
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.redAccent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Colors.redAccent.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _errorMessage!,
-                            style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  // Form Content Based on Auth State
+                  _buildContentForState(state),
                 ],
-
-                // Body based on MTProto Auth State
-                if (state == TelegramAuthState.waitingPhoneNumber ||
-                    state == TelegramAuthState.waitingParameters ||
-                    state == TelegramAuthState.uninitialized) ...[
-                  const Text(
-                    'Enter your phone number registered with Telegram:',
-                    style: TextStyle(color: AppTheme.doodleLine, fontSize: 13),
-                  ),
-                  const SizedBox(height: 12),
-                  GlassTextField(
-                    controller: _phoneController,
-                    hintText: '+62 812 3456 7890',
-                    prefixIcon: Icons.phone_outlined,
-                    keyboardType: TextInputType.phone,
-                  ),
-                  const SizedBox(height: 20),
-                  GlassButton(
-                    onPressed: _submitPhone,
-                    isLoading: _isLoading,
-                    child: const Text(
-                      'Request OTP Code',
-                      style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ] else if (state == TelegramAuthState.waitingCode) ...[
-                  const Text(
-                    'Enter the code received inside your Telegram app:',
-                    style: TextStyle(color: AppTheme.doodleLine, fontSize: 13),
-                  ),
-                  const SizedBox(height: 12),
-                  GlassTextField(
-                    controller: _codeController,
-                    hintText: '5-digit code',
-                    prefixIcon: Icons.lock_clock_outlined,
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 20),
-                  GlassButton(
-                    onPressed: _submitCode,
-                    isLoading: _isLoading,
-                    child: const Text(
-                      'Verify & Activate Vault',
-                      style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ] else if (state == TelegramAuthState.waitingPassword) ...[
-                  const Text(
-                    'Your Telegram account has 2-Step Verification enabled. Enter password:',
-                    style: TextStyle(color: AppTheme.doodleLine, fontSize: 13),
-                  ),
-                  const SizedBox(height: 12),
-                  GlassTextField(
-                    controller: _passwordController,
-                    hintText: '2FA Cloud Password',
-                    prefixIcon: Icons.key_outlined,
-                    obscureText: true,
-                  ),
-                  const SizedBox(height: 20),
-                  GlassButton(
-                    onPressed: _submitPassword,
-                    isLoading: _isLoading,
-                    child: const Text(
-                      'Unlock 2FA Session',
-                      style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ] else if (state == TelegramAuthState.ready) ...[
-                  const Center(
-                    child: Column(
-                      children: [
-                        Icon(Icons.check_circle_outline, color: AppTheme.accentCyan, size: 48),
-                        SizedBox(height: 12),
-                        Text(
-                          '2GB MTProto Vault Connected!',
-                          style: TextStyle(color: AppTheme.doodleLine, fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
-                  ),
-                ] else if (state == TelegramAuthState.error) ...[
-                  // Handled state: TDLib native binary not present or initialization error
-                  Center(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AppTheme.accentPurple.withValues(alpha: 0.15),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.offline_pin_rounded, color: AppTheme.accentPurple, size: 36),
-                        ),
-                        const SizedBox(height: 14),
-                        const Text(
-                          'Local Vault Mode Active',
-                          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Telegram MTProto native engine is offline. Your files will be securely stored in high-speed Local Vault.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: AppTheme.subtleText, fontSize: 12, height: 1.4),
-                        ),
-                        const SizedBox(height: 20),
-                        GlassButton(
-                          onPressed: () {
-                            Navigator.of(context).pop();
-                            widget.onAuthenticated();
-                          },
-                          child: const Text(
-                            'Continue to Vault',
-                            style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ] else ...[
-                  // Fallback: If TDLib is connecting or stuck, give option to input or skip to demo
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16.0),
-                      child: Column(
-                        children: [
-                          CircularProgressIndicator(strokeWidth: 2.0),
-                          SizedBox(height: 16),
-                          Text(
-                            'Connecting to Telegram MTProto...',
-                            style: TextStyle(color: AppTheme.subtleText, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // Allow user to continue to home or close dialog
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () {
-                            Navigator.of(context).pop();
-                            widget.onAuthenticated();
-                          },
-                          child: const Text(
-                            'Skip to Vault (Test UI)',
-                            style: TextStyle(color: AppTheme.subtleText, fontSize: 12),
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: const Text(
-                            'Cancel',
-                            style: TextStyle(color: Colors.redAccent, fontSize: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
+              ),
             ),
           );
         },
       ),
     );
   }
-}
 
+  String _getStepSubtitle(TelegramAuthState state) {
+    switch (state) {
+      case TelegramAuthState.waitingCredentials:
+        return 'Step 1/3: API Credentials';
+      case TelegramAuthState.waitingPhoneNumber:
+        return 'Step 2/3: Masukkan Nomor HP';
+      case TelegramAuthState.waitingCode:
+        return 'Step 3/3: Verifikasi Kode OTP';
+      case TelegramAuthState.waitingPassword:
+        return 'Verifikasi 2-Step Password';
+      case TelegramAuthState.ready:
+        return 'Koneksi Berhasil Aktif';
+      case TelegramAuthState.waitingParameters:
+        return 'Menghubungkan MTProto...';
+      case TelegramAuthState.error:
+        return 'Status Sambungan';
+      default:
+        return 'Aktivasi Cloud Storage';
+    }
+  }
+
+  Widget _buildContentForState(TelegramAuthState state) {
+    // If credentials are not set, show credential input form
+    if (state == TelegramAuthState.waitingCredentials ||
+        (!TelegramService.hasValidCredentials && state != TelegramAuthState.ready)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceDark.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.glassBorder),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, color: AppTheme.accentCyan, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Ambil api_id & api_hash gratis di my.telegram.org -> API development tools.',
+                    style: TextStyle(color: AppTheme.doodleLine, fontSize: 12, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'App api_id:',
+            style: TextStyle(color: AppTheme.doodleLine, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          GlassTextField(
+            controller: _apiIdController,
+            hintText: 'Contoh: 28391829',
+            prefixIcon: Icons.tag,
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'App api_hash:',
+            style: TextStyle(color: AppTheme.doodleLine, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          GlassTextField(
+            controller: _apiHashController,
+            hintText: 'Contoh: 7f83a09...',
+            prefixIcon: Icons.vpn_key_outlined,
+          ),
+          const SizedBox(height: 20),
+          GlassButton(
+            onPressed: _submitCredentials,
+            isLoading: _isLoading,
+            child: const Text(
+              'Simpan & Lanjutkan',
+              style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Step 2: Phone number
+    if (state == TelegramAuthState.waitingPhoneNumber) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Nomor HP Terdaftar di Telegram:',
+            style: TextStyle(color: AppTheme.doodleLine, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          GlassTextField(
+            controller: _phoneController,
+            hintText: '+6281234567890',
+            prefixIcon: Icons.phone_android_outlined,
+            keyboardType: TextInputType.phone,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Gunakan kode negara lengkap dengan tanda tambah (+)',
+            style: TextStyle(color: AppTheme.subtleText, fontSize: 11),
+          ),
+          const SizedBox(height: 20),
+          GlassButton(
+            onPressed: _submitPhone,
+            isLoading: _isLoading,
+            child: const Text(
+              'Kirim Kode OTP',
+              style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Step 3: OTP Code
+    if (state == TelegramAuthState.waitingCode) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Buka aplikasi Telegram resmi Anda dan masukkan 5 digit kode masuk yang dikirim:',
+            style: TextStyle(color: AppTheme.doodleLine, fontSize: 13, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          GlassTextField(
+            controller: _codeController,
+            hintText: '5-digit OTP Code',
+            prefixIcon: Icons.lock_outline,
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 20),
+          GlassButton(
+            onPressed: _submitCode,
+            isLoading: _isLoading,
+            child: const Text(
+              'Verifikasi & Buka Saluran Vault',
+              style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Step 4: 2FA Password
+    if (state == TelegramAuthState.waitingPassword) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Akun Telegram Anda menggunakan Two-Step Verification. Masukkan kata sandi cloud:',
+            style: TextStyle(color: AppTheme.doodleLine, fontSize: 13, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          GlassTextField(
+            controller: _passwordController,
+            hintText: 'Password 2FA',
+            prefixIcon: Icons.password,
+            obscureText: true,
+          ),
+          const SizedBox(height: 20),
+          GlassButton(
+            onPressed: _submitPassword,
+            isLoading: _isLoading,
+            child: const Text(
+              'Buka Akses 2FA',
+              style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Ready
+    if (state == TelegramAuthState.ready) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 20.0),
+          child: Column(
+            children: [
+              Icon(Icons.check_circle_outline, color: AppTheme.accentCyan, size: 52),
+              SizedBox(height: 14),
+              Text(
+                'Telegram MTProto Aktif!',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              SizedBox(height: 6),
+              Text(
+                'Saluran penyimpanan 2GB siap digunakan untuk upload dan download.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.subtleText, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Connecting progress / Handshake
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24.0),
+        child: Column(
+          children: [
+            const SizedBox(
+              width: 36,
+              height: 36,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentCyan),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Menghubungkan ke server Telegram MTProto...',
+              style: TextStyle(color: AppTheme.doodleLine, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Menginisialisasi sesi enkripsi database TDLib',
+              style: TextStyle(color: AppTheme.subtleText, fontSize: 11),
+            ),
+            const SizedBox(height: 18),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                widget.onAuthenticated();
+              },
+              child: const Text(
+                'Gunakan Mode Offline / Nanti Saja',
+                style: TextStyle(color: AppTheme.subtleText, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
