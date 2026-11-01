@@ -62,14 +62,14 @@ class TelegramTransferService {
           filename: filename,
           totalBytes: fileSize,
           transferredBytes: 0,
-          progress: 0.1,
+          progress: 0.05,
           isUpload: true,
         ),
       );
 
       String telegramFileId = '';
 
-      if (channelId != null) {
+      if (channelId != null && _telegram.isInitialized) {
         // 1. Send Document message via TDLib to the private channel
         final sendDocRes = await _telegram.tdlib.invoke(
           'sendMessage',
@@ -90,16 +90,64 @@ class TelegramTransferService {
           clientId: _telegram.clientId,
         );
 
-        // Extract Telegram remote file ID
         final messageContent = sendDocRes['content'] as Map<dynamic, dynamic>?;
         final document = messageContent?['document'] as Map<dynamic, dynamic>?;
         final documentFile = document?['document'] as Map<dynamic, dynamic>?;
-        telegramFileId =
-            documentFile?['remote']?['id']?.toString() ??
-            documentFile?['id']?.toString() ??
-            sendDocRes['id']?.toString() ??
-            '';
-        debugPrint('[TransferService] MTProto upload completed! Remote ID: $telegramFileId');
+        final int? tdlibLocalFileId = documentFile?['id'] as int?;
+
+        // 2. Wait for TDLib updateFile stream to verify real upload completion & get remote.id
+        if (tdlibLocalFileId != null) {
+          final completer = Completer<String>();
+          StreamSubscription? sub;
+
+          sub = _telegram.onFileUpdated.listen((fileMap) {
+            final id = fileMap['id'] as int?;
+            if (id == tdlibLocalFileId) {
+              final remote = fileMap['remote'] as Map<dynamic, dynamic>?;
+              final int uploaded = remote?['uploaded_size'] as int? ?? 0;
+              final bool isCompleted = remote?['is_uploading_completed'] as bool? ?? false;
+              final String remoteId = remote?['id'] as String? ?? '';
+
+              final double progressVal = fileSize > 0
+                  ? (uploaded / fileSize).clamp(0.05, 0.98)
+                  : 0.5;
+
+              _transferController.add(
+                TransferProgress(
+                  fileId: filename,
+                  filename: filename,
+                  totalBytes: fileSize,
+                  transferredBytes: uploaded,
+                  progress: progressVal,
+                  isUpload: true,
+                ),
+              );
+
+              if (isCompleted && remoteId.isNotEmpty && !completer.isCompleted) {
+                completer.complete(remoteId);
+                sub?.cancel();
+              }
+            }
+          });
+
+          // Timeout fallback: if TDLib doesn't emit completed within 90s, use initial remote ID or local fallback
+          final resolvedRemoteId = await completer.future.timeout(
+            const Duration(seconds: 90),
+            onTimeout: () {
+              sub?.cancel();
+              final initialRemoteId = documentFile?['remote']?['id']?.toString() ?? '';
+              if (initialRemoteId.isNotEmpty) {
+                return initialRemoteId;
+              }
+              return 'msg:${sendDocRes['id']}';
+            },
+          );
+
+          telegramFileId = resolvedRemoteId;
+          debugPrint('[TransferService] MTProto upload completed! Remote ID: $telegramFileId');
+        } else {
+          telegramFileId = 'msg:${sendDocRes['id']}';
+        }
       } else {
         // Safe offline-first fallback: Store file locally in vault storage directory
         final appDocDir = await getApplicationDocumentsDirectory();
@@ -117,7 +165,7 @@ class TelegramTransferService {
         debugPrint('[TransferService] Telegram not connected. File safely stored in Local Vault: $localSavedPath');
       }
 
-      // 2. Save metadata to Firestore & Local SQLite Cache
+      // 3. Save metadata to Firestore & Local SQLite Cache
       final savedFile = await _storageRepo.saveFileMetadata(
         filename: filename,
         telegramFileId: telegramFileId,
@@ -157,39 +205,147 @@ class TelegramTransferService {
     }
   }
 
-  /// Downloads file from Telegram or fetches from local vault
+  /// Downloads file from Telegram MTProto or returns local vault file path
   Future<String?> downloadFile({
     required String telegramFileId,
     required String filename,
-    required int priority, // 1 to 32
+    int priority = 32, // 1 to 32 (32 = highest)
   }) async {
     try {
       debugPrint('[TransferService] Requesting download for $filename (ID: $telegramFileId)');
 
-      // If stored locally in vault fallback
+      // 1. If stored locally in vault fallback
       if (telegramFileId.startsWith('local:')) {
         final localPath = telegramFileId.replaceFirst('local:', '');
         debugPrint('[TransferService] File is already available locally at: $localPath');
         return localPath;
       }
 
-      final fileIdInt = int.tryParse(telegramFileId);
-      if (fileIdInt != null && _telegram.vaultChannelId != null) {
-        await _telegram.tdlib.invoke(
-          'downloadFile',
-          parameters: {
-            'file_id': fileIdInt,
-            'priority': priority,
-            'synchronous': false,
-          },
-          clientId: _telegram.clientId,
+      _transferController.add(
+        TransferProgress(
+          fileId: telegramFileId,
+          filename: filename,
+          totalBytes: 0,
+          transferredBytes: 0,
+          progress: 0.05,
+          isUpload: false,
+        ),
+      );
+
+      // 2. Query TDLib for the remote file object using getRemoteFile
+      final getFileRes = await _telegram.tdlib.invoke(
+        'getRemoteFile',
+        parameters: {
+          'remote_file_id': telegramFileId,
+        },
+        clientId: _telegram.clientId,
+      );
+
+      final local = getFileRes['local'] as Map<dynamic, dynamic>?;
+      final bool alreadyCompleted = local?['is_downloading_completed'] as bool? ?? false;
+      final String? existingPath = local?['path'] as String?;
+
+      if (alreadyCompleted && existingPath != null && existingPath.isNotEmpty) {
+        debugPrint('[TransferService] File already downloaded at: $existingPath');
+        _transferController.add(
+          TransferProgress(
+            fileId: telegramFileId,
+            filename: filename,
+            totalBytes: 0,
+            transferredBytes: 0,
+            progress: 1.0,
+            isUpload: false,
+            isCompleted: true,
+          ),
+        );
+        return existingPath;
+      }
+
+      final int? localFileId = getFileRes['id'] as int?;
+      if (localFileId == null) {
+        throw Exception('TDLib failed to resolve file ID for remote ID: $telegramFileId');
+      }
+
+      // 3. Initiate TDLib download
+      final completer = Completer<String?>();
+      StreamSubscription? sub;
+
+      sub = _telegram.onFileUpdated.listen((fileMap) {
+        final id = fileMap['id'] as int?;
+        if (id == localFileId) {
+          final loc = fileMap['local'] as Map<dynamic, dynamic>?;
+          final int downloaded = loc?['downloaded_size'] as int? ?? 0;
+          final int total = fileMap['size'] as int? ?? 1;
+          final bool isCompleted = loc?['is_downloading_completed'] as bool? ?? false;
+          final String path = loc?['path'] as String? ?? '';
+
+          final double prog = total > 0 ? (downloaded / total).clamp(0.05, 0.99) : 0.5;
+
+          _transferController.add(
+            TransferProgress(
+              fileId: telegramFileId,
+              filename: filename,
+              totalBytes: total,
+              transferredBytes: downloaded,
+              progress: prog,
+              isUpload: false,
+            ),
+          );
+
+          if (isCompleted && path.isNotEmpty && !completer.isCompleted) {
+            completer.complete(path);
+            sub?.cancel();
+          }
+        }
+      });
+
+      await _telegram.tdlib.invoke(
+        'downloadFile',
+        parameters: {
+          'file_id': localFileId,
+          'priority': priority,
+          'synchronous': false,
+        },
+        clientId: _telegram.clientId,
+      );
+
+      final downloadedPath = await completer.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          sub?.cancel();
+          return null;
+        },
+      );
+
+      if (downloadedPath != null) {
+        _transferController.add(
+          TransferProgress(
+            fileId: telegramFileId,
+            filename: filename,
+            totalBytes: 0,
+            transferredBytes: 0,
+            progress: 1.0,
+            isUpload: false,
+            isCompleted: true,
+          ),
         );
       }
-      return null;
+
+      return downloadedPath;
     } catch (e) {
       debugPrint('[TransferService] Download request error: $e');
+      _transferController.add(
+        TransferProgress(
+          fileId: telegramFileId,
+          filename: filename,
+          totalBytes: 0,
+          transferredBytes: 0,
+          progress: 0.0,
+          isUpload: false,
+          error: e.toString(),
+        ),
+      );
       return null;
     }
   }
 }
-

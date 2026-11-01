@@ -13,6 +13,18 @@ import '../../transfers/data/telegram_transfer_service.dart';
 import '../data/storage_repository.dart';
 import '../domain/models/file_model.dart';
 import '../domain/models/folder_model.dart';
+import 'widgets/file_actions_modal.dart';
+import 'widgets/image_preview_dialog.dart';
+import 'widgets/transfer_progress_banner.dart';
+
+enum SortOption {
+  nameAsc,
+  nameDesc,
+  dateNewest,
+  dateOldest,
+  sizeLargest,
+  sizeSmallest,
+}
 
 class StorageHomeScreen extends StatefulWidget {
   final String? initialFolderId;
@@ -38,8 +50,10 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
   List<FileModel> _files = [];
   bool _isLoading = true;
   String _selectedFilter = 'All'; // All, Folders, Images, Docs, Media
+  SortOption _sortOption = SortOption.dateNewest;
   String _searchQuery = '';
   bool _isSearching = false;
+  int _totalGlobalVaultBytes = 0;
   final TextEditingController _searchController = TextEditingController();
 
   @override
@@ -69,12 +83,14 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
         userId: userId,
         folderId: widget.initialFolderId,
       );
+      final globalBytesFuture = _storageRepo.getTotalVaultBytes(userId: userId);
 
-      final results = await Future.wait([foldersFuture, filesFuture]);
+      final results = await Future.wait([foldersFuture, filesFuture, globalBytesFuture]);
       if (mounted) {
         setState(() {
           _folders = results[0] as List<FolderModel>;
           _files = results[1] as List<FileModel>;
+          _totalGlobalVaultBytes = results[2] as int;
           _isLoading = false;
         });
       }
@@ -85,10 +101,31 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
 
   List<FolderModel> get _filteredFolders {
     if (_selectedFilter != 'All' && _selectedFilter != 'Folders') return [];
-    if (_searchQuery.isEmpty) return _folders;
-    return _folders
-        .where((f) => f.name.toLowerCase().contains(_searchQuery.toLowerCase()))
-        .toList();
+    var list = _folders;
+    if (_searchQuery.isNotEmpty) {
+      list = list
+          .where((f) => f.name.toLowerCase().contains(_searchQuery.toLowerCase()))
+          .toList();
+    }
+
+    // Apply sorting
+    switch (_sortOption) {
+      case SortOption.nameAsc:
+        list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        break;
+      case SortOption.nameDesc:
+        list.sort((a, b) => b.name.toLowerCase().compareTo(a.name.toLowerCase()));
+        break;
+      case SortOption.dateNewest:
+        list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+      case SortOption.dateOldest:
+        list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      default:
+        break;
+    }
+    return list;
   }
 
   List<FileModel> get _filteredFiles {
@@ -102,14 +139,34 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
       list = list.where((f) => ['mp4', 'mkv', 'mp3', 'wav', 'mov'].contains(f.extension.toLowerCase())).toList();
     }
 
-    if (_searchQuery.isEmpty) return list;
-    return list
-        .where((f) => f.filename.toLowerCase().contains(_searchQuery.toLowerCase()))
-        .toList();
-  }
+    if (_searchQuery.isNotEmpty) {
+      list = list
+          .where((f) => f.filename.toLowerCase().contains(_searchQuery.toLowerCase()))
+          .toList();
+    }
 
-  int get _totalVaultBytes {
-    return _files.fold<int>(0, (sum, f) => sum + f.size);
+    // Apply sorting
+    switch (_sortOption) {
+      case SortOption.nameAsc:
+        list.sort((a, b) => a.filename.toLowerCase().compareTo(b.filename.toLowerCase()));
+        break;
+      case SortOption.nameDesc:
+        list.sort((a, b) => b.filename.toLowerCase().compareTo(a.filename.toLowerCase()));
+        break;
+      case SortOption.dateNewest:
+        list.sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
+        break;
+      case SortOption.dateOldest:
+        list.sort((a, b) => a.uploadedAt.compareTo(b.uploadedAt));
+        break;
+      case SortOption.sizeLargest:
+        list.sort((a, b) => b.size.compareTo(a.size));
+        break;
+      case SortOption.sizeSmallest:
+        list.sort((a, b) => a.size.compareTo(b.size));
+        break;
+    }
+    return list;
   }
 
   String _formatTotalBytes(int bytes) {
@@ -118,6 +175,8 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
     if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
+
+  // --- Folder Management ---
 
   Future<void> _showCreateFolderDialog() async {
     final controller = TextEditingController();
@@ -153,7 +212,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                   ),
                   const SizedBox(width: 14),
                   Text(
-                    'Create New Folder',
+                    'Buat Folder Baru',
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontSize: 18),
                   ),
                 ],
@@ -161,7 +220,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
               const SizedBox(height: 18),
               GlassTextField(
                 controller: controller,
-                hintText: 'e.g. Work Documents, Photos 2026',
+                hintText: 'Contoh: Dokumen Kerja, Foto 2026',
                 prefixIcon: Icons.folder_open_rounded,
                 autofocus: true,
               ),
@@ -171,7 +230,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                   Expanded(
                     child: TextButton(
                       onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Cancel', style: TextStyle(color: AppTheme.subtleText)),
+                      child: const Text('Batal', style: TextStyle(color: AppTheme.subtleText)),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -189,7 +248,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                           _loadContents();
                         }
                       },
-                      child: const Text('Create Folder', style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600)),
+                      child: const Text('Simpan', style: TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ],
@@ -201,83 +260,145 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
     );
   }
 
-  Future<void> _pickAndUploadFile() async {
-    final messenger = ScaffoldMessenger.of(context);
+  void _showRenameFolderDialog(FolderModel folder) {
+    final controller = TextEditingController(text: folder.name);
 
-    final result = await FilePicker.platform.pickFiles();
-    if (result == null || result.files.single.path == null) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: AppTheme.glassBorder),
+        ),
+        title: const Text('Ganti Nama Folder', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: GlassTextField(
+          controller: controller,
+          hintText: 'Nama folder baru',
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal', style: TextStyle(color: AppTheme.subtleText)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty && newName != folder.name && _auth.currentUser != null) {
+                Navigator.pop(ctx);
+                await _storageRepo.renameFolder(
+                  folderId: folder.id,
+                  newName: newName,
+                  userId: _auth.currentUser!.uid,
+                );
+                _loadContents();
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentCyan,
+              foregroundColor: Colors.black87,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
 
-    final pickedFile = File(result.files.single.path!);
-    final filename = result.files.single.name;
+  void _showDeleteFolderDialog(FolderModel folder) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: AppTheme.glassBorder),
+        ),
+        title: const Text('Hapus Folder?', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          'Folder "${folder.name}" beserta semua file di dalamnya akan dihapus permanen.',
+          style: const TextStyle(color: AppTheme.subtleText, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Batal', style: TextStyle(color: AppTheme.subtleText)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (_auth.currentUser != null) {
+                Navigator.pop(ctx);
+                await _storageRepo.deleteFolder(
+                  folderId: folder.id,
+                  userId: _auth.currentUser!.uid,
+                );
+                _loadContents();
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Multi-File Upload ---
+
+  Future<void> _pickAndUploadFiles() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+    );
+
+    if (result == null || result.files.isEmpty) return;
+
     final userId = _auth.currentUser?.uid;
-    if (userId == null) return;
+    if (userId == null || !mounted) return;
 
-    final isTelegramConnected = _telegram.vaultChannelId != null;
+    final messenger = ScaffoldMessenger.of(context);
+    final total = result.files.length;
+    int successCount = 0;
 
     messenger.showSnackBar(
       SnackBar(
-        content: Row(
-          children: [
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accentCyan),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                isTelegramConnected
-                    ? 'Uploading $filename to Telegram Cloud...'
-                    : 'Saving $filename to Local Vault...',
-                style: const TextStyle(fontSize: 13, color: Colors.white),
-              ),
-            ),
-          ],
-        ),
+        content: Text('Memulai pengunggahan $total file ke vault...'),
         backgroundColor: AppTheme.surfaceDark,
-        duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
 
-    try {
-      await _transferService.uploadFile(
-        file: pickedFile,
-        filename: filename,
-        mimeType: result.files.single.extension ?? 'application/octet-stream',
-        userId: userId,
-        folderId: widget.initialFolderId,
-      );
+    for (final picked in result.files) {
+      if (picked.path == null) continue;
+      try {
+        await _transferService.uploadFile(
+          file: File(picked.path!),
+          filename: picked.name,
+          mimeType: picked.extension ?? 'application/octet-stream',
+          userId: userId,
+          folderId: widget.initialFolderId,
+        );
+        successCount++;
+      } catch (e) {
+        debugPrint('[StorageHome] Gagal mengunggah ${picked.name}: $e');
+      }
+    }
 
-      if (mounted) {
-        _loadContents();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: AppTheme.accentCyan, size: 20),
-                const SizedBox(width: 10),
-                Expanded(child: Text('$filename uploaded successfully!')),
-              ],
-            ),
-            backgroundColor: AppTheme.surfaceDark,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Upload info: $e'),
-            backgroundColor: AppTheme.surfaceDark,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
+    if (mounted) {
+      _loadContents();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('$successCount dari $total file berhasil diunggah.'),
+          backgroundColor: AppTheme.surfaceDark,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -312,11 +433,11 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                   ),
                   child: const Icon(Icons.upload_file_rounded, color: AppTheme.accentCyan),
                 ),
-                title: const Text('Upload File', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
-                subtitle: const Text('Upload up to 2GB to cloud vault', style: TextStyle(fontSize: 12, color: AppTheme.subtleText)),
+                title: const Text('Unggah File (Multi-Select)', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
+                subtitle: const Text('Pilih satu atau banyak file sekaligus (hingga 2GB per file)', style: TextStyle(fontSize: 12, color: AppTheme.subtleText)),
                 onTap: () {
                   Navigator.pop(ctx);
-                  _pickAndUploadFile();
+                  _pickAndUploadFiles();
                 },
               ),
               const Divider(color: AppTheme.glassBorder, height: 16),
@@ -329,11 +450,92 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                   ),
                   child: const Icon(Icons.create_new_folder_rounded, color: AppTheme.accentPurple),
                 ),
-                title: const Text('Create Folder', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
-                subtitle: const Text('Organize your files in subdirectories', style: TextStyle(fontSize: 12, color: AppTheme.subtleText)),
+                title: const Text('Buat Folder Baru', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
+                subtitle: const Text('Kelompokkan file Anda dalam sub-direktori', style: TextStyle(fontSize: 12, color: AppTheme.subtleText)),
                 onTap: () {
                   Navigator.pop(ctx);
                   _showCreateFolderDialog();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showSortModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: GlassCard(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Urutkan Berdasarkan', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 12),
+              RadioListTile<SortOption>(
+                title: const Text('Tanggal Terbaru', style: TextStyle(color: Colors.white, fontSize: 13)),
+                value: SortOption.dateNewest,
+                groupValue: _sortOption,
+                activeColor: AppTheme.accentCyan,
+                onChanged: (val) {
+                  setState(() => _sortOption = val!);
+                  Navigator.pop(ctx);
+                },
+              ),
+              RadioListTile<SortOption>(
+                title: const Text('Tanggal Terlama', style: TextStyle(color: Colors.white, fontSize: 13)),
+                value: SortOption.dateOldest,
+                groupValue: _sortOption,
+                activeColor: AppTheme.accentCyan,
+                onChanged: (val) {
+                  setState(() => _sortOption = val!);
+                  Navigator.pop(ctx);
+                },
+              ),
+              RadioListTile<SortOption>(
+                title: const Text('Nama File (A - Z)', style: TextStyle(color: Colors.white, fontSize: 13)),
+                value: SortOption.nameAsc,
+                groupValue: _sortOption,
+                activeColor: AppTheme.accentCyan,
+                onChanged: (val) {
+                  setState(() => _sortOption = val!);
+                  Navigator.pop(ctx);
+                },
+              ),
+              RadioListTile<SortOption>(
+                title: const Text('Nama File (Z - A)', style: TextStyle(color: Colors.white, fontSize: 13)),
+                value: SortOption.nameDesc,
+                groupValue: _sortOption,
+                activeColor: AppTheme.accentCyan,
+                onChanged: (val) {
+                  setState(() => _sortOption = val!);
+                  Navigator.pop(ctx);
+                },
+              ),
+              RadioListTile<SortOption>(
+                title: const Text('Ukuran Terbesar', style: TextStyle(color: Colors.white, fontSize: 13)),
+                value: SortOption.sizeLargest,
+                groupValue: _sortOption,
+                activeColor: AppTheme.accentCyan,
+                onChanged: (val) {
+                  setState(() => _sortOption = val!);
+                  Navigator.pop(ctx);
+                },
+              ),
+              RadioListTile<SortOption>(
+                title: const Text('Ukuran Terkecil', style: TextStyle(color: Colors.white, fontSize: 13)),
+                value: SortOption.sizeSmallest,
+                groupValue: _sortOption,
+                activeColor: AppTheme.accentCyan,
+                onChanged: (val) {
+                  setState(() => _sortOption = val!);
+                  Navigator.pop(ctx);
                 },
               ),
             ],
@@ -353,19 +555,63 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
     );
   }
 
+  Future<void> _handleLogout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surfaceDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: AppTheme.glassBorder),
+        ),
+        title: const Text('Keluar dari Akun?', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: const Text(
+          'Sesi vault dan Telegram Anda akan ditutup.',
+          style: TextStyle(color: AppTheme.subtleText, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal', style: TextStyle(color: AppTheme.subtleText)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Keluar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _auth.signOut();
+      await _telegram.logOut();
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const DualAuthScreen()),
+          (route) => false,
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isRoot = widget.initialFolderId == null;
     final isTelegramReady = _telegram.vaultChannelId != null;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0F19),
+      backgroundColor: AppTheme.backgroundDark,
       body: SafeArea(
         child: Column(
           children: [
-            // Modern Clean Header
+            // Header
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
               child: Row(
                 children: [
                   if (!isRoot) ...[
@@ -411,7 +657,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
-                                  isTelegramReady ? 'Telegram MTProto 2GB Active' : 'Tap to Connect Telegram (2GB)',
+                                  isTelegramReady ? 'Telegram MTProto 2GB Aktif' : 'Tap untuk Sambung Telegram (2GB)',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: isTelegramReady ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
@@ -439,14 +685,18 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                       });
                     },
                   ),
-                  // User Profile & Logout
+                  // User Profile & Options
                   PopupMenuButton<String>(
                     icon: CircleAvatar(
                       radius: 18,
                       backgroundColor: AppTheme.accentCyan.withValues(alpha: 0.2),
                       child: Text(
                         (_auth.currentUser?.email?.substring(0, 1) ?? 'U').toUpperCase(),
-                        style: const TextStyle(color: AppTheme.accentCyan, fontWeight: FontWeight.w700),
+                        style: const TextStyle(
+                          color: AppTheme.accentCyan,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
                       ),
                     ),
                     color: AppTheme.surfaceDark,
@@ -454,16 +704,11 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                       borderRadius: BorderRadius.circular(16),
                       side: const BorderSide(color: AppTheme.glassBorder),
                     ),
-                    onSelected: (val) async {
+                    onSelected: (val) {
                       if (val == 'telegram') {
                         _showTelegramSetup();
                       } else if (val == 'logout') {
-                        await _auth.signOut();
-                        if (context.mounted) {
-                          Navigator.of(context).pushReplacement(
-                            MaterialPageRoute(builder: (_) => const DualAuthScreen()),
-                          );
-                        }
+                        _handleLogout();
                       }
                     },
                     itemBuilder: (ctx) => [
@@ -485,7 +730,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                               color: isTelegramReady ? const Color(0xFF10B981) : AppTheme.accentCyan,
                             ),
                             const SizedBox(width: 10),
-                            Text(isTelegramReady ? 'Telegram Settings' : 'Connect Telegram (2GB)'),
+                            Text(isTelegramReady ? 'Pengaturan Telegram' : 'Sambungkan Telegram (2GB)'),
                           ],
                         ),
                       ),
@@ -495,7 +740,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                           children: [
                             Icon(Icons.logout_rounded, size: 18, color: Colors.redAccent),
                             SizedBox(width: 10),
-                            Text('Sign Out', style: TextStyle(color: Colors.redAccent)),
+                            Text('Keluar Akun', style: TextStyle(color: Colors.redAccent)),
                           ],
                         ),
                       ),
@@ -505,63 +750,54 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
               ),
             ),
 
-            // Search Bar (if activated)
+            // Search Bar
             if (_isSearching)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 6.0),
+                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
                 child: GlassTextField(
                   controller: _searchController,
-                  hintText: 'Search files and folders...',
+                  hintText: 'Cari file dan folder...',
                   prefixIcon: Icons.search_rounded,
                   autofocus: true,
                   onChanged: (val) => setState(() => _searchQuery = val),
                 ),
               ),
 
-            // Vault Status Card (Only on root when Telegram not connected)
-            if (isRoot && !isTelegramReady)
+            // Real-Time Transfer Progress Banner
+            const TransferProgressBanner(),
+
+            // Vault Storage Metric Card (Root only)
+            if (isRoot)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
                 child: GlassCard(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  opacity: 0.12,
+                  opacity: 0.1,
                   child: Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(10),
+                        padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                           color: AppTheme.accentCyan.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.cloud_upload_outlined, color: AppTheme.accentCyan, size: 22),
+                        child: const Icon(Icons.cloud_done_outlined, color: AppTheme.accentCyan, size: 20),
                       ),
                       const SizedBox(width: 12),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              'Unlock Unlimited 2GB Cloud',
+                            const Text(
+                              'Penyimpanan Vault Global',
                               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.white),
                             ),
-                            SizedBox(height: 2),
+                            const SizedBox(height: 2),
                             Text(
-                              'Connect Telegram MTProto session',
-                              style: TextStyle(fontSize: 11, color: AppTheme.subtleText),
+                              '${_formatTotalBytes(_totalGlobalVaultBytes)} digunakan • Kuota 2GB per file tanpa batas',
+                              style: const TextStyle(fontSize: 11, color: AppTheme.subtleText),
                             ),
                           ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _showTelegramSetup,
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          backgroundColor: AppTheme.accentCyan.withValues(alpha: 0.2),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        child: const Text(
-                          'Connect',
-                          style: TextStyle(color: AppTheme.accentCyan, fontSize: 12, fontWeight: FontWeight.w600),
                         ),
                       ),
                     ],
@@ -569,38 +805,58 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                 ),
               ),
 
-            // Filter Tabs (Horizontal chips)
-            Container(
-              height: 42,
-              margin: const EdgeInsets.only(top: 6, bottom: 8),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                children: ['All', 'Folders', 'Images', 'Docs', 'Media'].map((tab) {
-                  final isSelected = _selectedFilter == tab;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: ChoiceChip(
-                      label: Text(tab),
-                      selected: isSelected,
-                      onSelected: (_) => setState(() => _selectedFilter = tab),
-                      backgroundColor: AppTheme.surfaceDark,
-                      selectedColor: AppTheme.accentCyan.withValues(alpha: 0.25),
-                      labelStyle: TextStyle(
-                        color: isSelected ? AppTheme.accentCyan : AppTheme.subtleText,
-                        fontSize: 12,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+            // Filter Tabs & Sort Button Row
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 38,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: ['All', 'Folders', 'Images', 'Docs', 'Media'].map((tab) {
+                          final isSelected = _selectedFilter == tab;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: ChoiceChip(
+                              label: Text(tab),
+                              selected: isSelected,
+                              onSelected: (_) => setState(() => _selectedFilter = tab),
+                              backgroundColor: AppTheme.surfaceDark,
+                              selectedColor: AppTheme.accentCyan.withValues(alpha: 0.25),
+                              labelStyle: TextStyle(
+                                color: isSelected ? AppTheme.accentCyan : AppTheme.subtleText,
+                                fontSize: 12,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: BorderSide(
+                                  color: isSelected ? AppTheme.accentCyan.withValues(alpha: 0.5) : AppTheme.glassBorder,
+                                ),
+                              ),
+                              showCheckmark: false,
+                            ),
+                          );
+                        }).toList(),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                          color: isSelected ? AppTheme.accentCyan.withValues(alpha: 0.5) : AppTheme.glassBorder,
-                        ),
-                      ),
-                      showCheckmark: false,
                     ),
-                  );
-                }).toList(),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.sort_rounded, color: AppTheme.accentCyan, size: 20),
+                    tooltip: 'Urutkan',
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppTheme.surfaceDark,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: const BorderSide(color: AppTheme.glassBorder),
+                      ),
+                    ),
+                    onPressed: _showSortModal,
+                  ),
+                ],
               ),
             ),
 
@@ -631,7 +887,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                 ),
                                 const SizedBox(height: 18),
                                 Text(
-                                  _searchQuery.isNotEmpty ? 'No matches found' : 'This folder is empty',
+                                  _searchQuery.isNotEmpty ? 'Tidak ada hasil cocok' : 'Folder ini masih kosong',
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -641,8 +897,8 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                 const SizedBox(height: 6),
                                 Text(
                                   _searchQuery.isNotEmpty
-                                      ? 'Try searching with a different filename'
-                                      : 'Upload files up to 2GB or create folders to organize your vault',
+                                      ? 'Coba cari dengan kata kunci lain'
+                                      : 'Unggah file hingga 2GB atau buat folder untuk merapikan penyimpanan',
                                   textAlign: TextAlign.center,
                                   style: const TextStyle(color: AppTheme.subtleText, fontSize: 13),
                                 ),
@@ -653,7 +909,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                     OutlinedButton.icon(
                                       onPressed: _showCreateFolderDialog,
                                       icon: const Icon(Icons.create_new_folder_outlined, size: 18),
-                                      label: const Text('New Folder'),
+                                      label: const Text('Folder Baru'),
                                       style: OutlinedButton.styleFrom(
                                         foregroundColor: Colors.white,
                                         side: const BorderSide(color: AppTheme.glassBorder),
@@ -663,9 +919,9 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                     ),
                                     const SizedBox(width: 12),
                                     ElevatedButton.icon(
-                                      onPressed: _pickAndUploadFile,
+                                      onPressed: _pickAndUploadFiles,
                                       icon: const Icon(Icons.upload_file_rounded, size: 18),
-                                      label: const Text('Upload'),
+                                      label: const Text('Unggah'),
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: AppTheme.accentCyan,
                                         foregroundColor: Colors.black87,
@@ -693,7 +949,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
-                                      'Folders (${_filteredFolders.length})',
+                                      'Folder (${_filteredFolders.length})',
                                       style: const TextStyle(
                                         color: Colors.white70,
                                         fontSize: 13,
@@ -711,13 +967,13 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                     crossAxisCount: 2,
                                     crossAxisSpacing: 12,
                                     mainAxisSpacing: 12,
-                                    childAspectRatio: 2.2,
+                                    childAspectRatio: 2.1,
                                   ),
                                   itemCount: _filteredFolders.length,
                                   itemBuilder: (ctx, index) {
                                     final folder = _filteredFolders[index];
                                     return GlassCard(
-                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                       borderRadius: BorderRadius.circular(16),
                                       onTap: () {
                                         Navigator.push(
@@ -744,7 +1000,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                               size: 20,
                                             ),
                                           ),
-                                          const SizedBox(width: 10),
+                                          const SizedBox(width: 8),
                                           Expanded(
                                             child: Column(
                                               mainAxisAlignment: MainAxisAlignment.center,
@@ -771,6 +1027,32 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                               ],
                                             ),
                                           ),
+                                          PopupMenuButton<String>(
+                                            icon: const Icon(Icons.more_vert_rounded, size: 16, color: AppTheme.subtleText),
+                                            padding: EdgeInsets.zero,
+                                            color: AppTheme.surfaceDark,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(14),
+                                              side: const BorderSide(color: AppTheme.glassBorder),
+                                            ),
+                                            onSelected: (action) {
+                                              if (action == 'rename') {
+                                                _showRenameFolderDialog(folder);
+                                              } else if (action == 'delete') {
+                                                _showDeleteFolderDialog(folder);
+                                              }
+                                            },
+                                            itemBuilder: (_) => [
+                                              const PopupMenuItem(
+                                                value: 'rename',
+                                                child: Text('Ganti Nama', style: TextStyle(color: Colors.white, fontSize: 13)),
+                                              ),
+                                              const PopupMenuItem(
+                                                value: 'delete',
+                                                child: Text('Hapus Folder', style: TextStyle(color: Colors.redAccent, fontSize: 13)),
+                                              ),
+                                            ],
+                                          ),
                                         ],
                                       ),
                                     );
@@ -785,19 +1067,12 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
                                     Text(
-                                      'Files (${_filteredFiles.length})',
+                                      'File (${_filteredFiles.length})',
                                       style: const TextStyle(
                                         color: Colors.white70,
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
                                         letterSpacing: 0.3,
-                                      ),
-                                    ),
-                                    Text(
-                                      _formatTotalBytes(_totalVaultBytes),
-                                      style: const TextStyle(
-                                        color: AppTheme.subtleText,
-                                        fontSize: 12,
                                       ),
                                     ),
                                   ],
@@ -811,10 +1086,30 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                   itemBuilder: (ctx, index) {
                                     final file = _filteredFiles[index];
                                     final isLocal = file.telegramFileId.startsWith('local:');
+                                    final isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif']
+                                        .contains(file.extension.toLowerCase());
 
                                     return GlassCard(
                                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                                       borderRadius: BorderRadius.circular(16),
+                                      onTap: () {
+                                        if (isImage && isLocal) {
+                                          ImagePreviewDialog.show(
+                                            context,
+                                            imagePath: file.telegramFileId.replaceFirst('local:', ''),
+                                            filename: file.filename,
+                                          );
+                                        } else {
+                                          if (_auth.currentUser != null) {
+                                            FileActionsModal.show(
+                                              context,
+                                              file: file,
+                                              userId: _auth.currentUser!.uid,
+                                              onModified: _loadContents,
+                                            );
+                                          }
+                                        }
+                                      },
                                       child: Row(
                                         children: [
                                           Container(
@@ -876,23 +1171,14 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                                             ),
                                           ),
                                           IconButton(
-                                            icon: const Icon(Icons.download_rounded, color: AppTheme.accentCyan, size: 20),
-                                            onPressed: () async {
-                                              final localPath = await _transferService.downloadFile(
-                                                telegramFileId: file.telegramFileId,
-                                                filename: file.filename,
-                                                priority: 1,
-                                              );
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(context).showSnackBar(
-                                                  SnackBar(
-                                                    content: Text(localPath != null
-                                                        ? 'Ready: $localPath'
-                                                        : 'Downloading ${file.filename}...'),
-                                                    backgroundColor: AppTheme.surfaceDark,
-                                                    behavior: SnackBarBehavior.floating,
-                                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                                  ),
+                                            icon: const Icon(Icons.more_vert_rounded, color: AppTheme.subtleText, size: 20),
+                                            onPressed: () {
+                                              if (_auth.currentUser != null) {
+                                                FileActionsModal.show(
+                                                  context,
+                                                  file: file,
+                                                  userId: _auth.currentUser!.uid,
+                                                  onModified: _loadContents,
                                                 );
                                               }
                                             },

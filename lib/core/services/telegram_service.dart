@@ -15,7 +15,7 @@ enum TelegramAuthState {
   waitingParameters,
   waitingPhoneNumber,
   waitingCode,
-  waitingPassword,
+  waitingPassword,    
   ready,
   loggingOut,
   closed,
@@ -49,11 +49,15 @@ class TelegramService {
   EventEmitterListener? _updateListener;
   final StreamController<TelegramAuthState> _authStateController =
       StreamController<TelegramAuthState>.broadcast();
+  final StreamController<Map<dynamic, dynamic>> _fileUpdateController =
+      StreamController<Map<dynamic, dynamic>>.broadcast();
 
   bool _isInitialized = false;
 
   /// Exposes the authorization state updates stream for UI consumers
   Stream<TelegramAuthState> get onAuthStateChanged => _authStateController.stream;
+  /// Exposes TDLib real-time file transfer updates (uploading & downloading progress)
+  Stream<Map<dynamic, dynamic>> get onFileUpdated => _fileUpdateController.stream;
   TelegramAuthState get currentState => _currentState;
   int get clientId => _clientId;
   Tdlib get tdlib => _tdlib;
@@ -84,11 +88,11 @@ class TelegramService {
   }
 
   /// Initializes TDLib instance, local database/file storage directories, and authorization stream
-  Future<void> initialize() async {
+  Future<void> initialize({String? userId}) async {
     if (_isInitialized) return;
 
     try {
-      debugPrint('[TelegramService] Initializing TDLib MTProto client...');
+      debugPrint('[TelegramService] Initializing TDLib MTProto client (User: $userId)...');
 
       // Load saved credentials from SQLite if available
       final savedIdStr = await LocalDatabaseService.instance.getSetting('telegram_api_id');
@@ -104,7 +108,8 @@ class TelegramService {
       _clientId = _tdlib.td_create_client_id();
 
       final appDocDir = await getApplicationDocumentsDirectory();
-      final tdlibBaseDir = Directory(p.join(appDocDir.path, 'telegram_cloud_vault'));
+      final userScope = userId != null ? 'user_$userId' : 'shared';
+      final tdlibBaseDir = Directory(p.join(appDocDir.path, 'telegram_cloud_vault', userScope));
 
       final dbDirectory = Directory(p.join(tdlibBaseDir.path, 'tdlib_db'));
       final filesDirectory = Directory(p.join(tdlibBaseDir.path, 'tdlib_files'));
@@ -164,6 +169,13 @@ class TelegramService {
             case 'updateConnectionState':
               final connectionState = update['state']?['@type'];
               debugPrint('[TelegramService] Connection State: $connectionState');
+              break;
+
+            case 'updateFile':
+              final fileObj = update['file'] as Map<dynamic, dynamic>?;
+              if (fileObj != null) {
+                _fileUpdateController.add(fileObj);
+              }
               break;
 
             default:

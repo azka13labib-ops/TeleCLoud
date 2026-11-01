@@ -30,12 +30,35 @@ class _DualAuthScreenState extends State<DualAuthScreen> {
     super.dispose();
   }
 
+  String _getFriendlyErrorMessage(Object e) {
+    final str = e.toString().toLowerCase();
+    if (str.contains('user-not-found')) {
+      return 'Akun dengan email ini belum terdaftar. Silakan pilih Register.';
+    } else if (str.contains('wrong-password') || str.contains('invalid-credential')) {
+      return 'Email atau kata sandi tidak sesuai. Periksa kembali.';
+    } else if (str.contains('email-already-in-use')) {
+      return 'Email ini sudah terdaftar. Silakan pilih Sign In.';
+    } else if (str.contains('weak-password')) {
+      return 'Kata sandi terlalu pendek. Gunakan minimal 6 karakter.';
+    } else if (str.contains('invalid-email')) {
+      return 'Format alamat email tidak valid.';
+    } else if (str.contains('network-request-failed')) {
+      return 'Gagal terhubung. Periksa koneksi internet Anda.';
+    }
+    return 'Terjadi kendala saat autentikasi: $e';
+  }
+
   Future<void> _handleEmailAuth() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
-      setState(() => _errorMessage = 'Please fill in both email and password');
+      setState(() => _errorMessage = 'Mohon isi email dan kata sandi Anda');
+      return;
+    }
+
+    if (password.length < 6) {
+      setState(() => _errorMessage = 'Kata sandi minimal terdiri dari 6 karakter');
       return;
     }
 
@@ -52,7 +75,7 @@ class _DualAuthScreenState extends State<DualAuthScreen> {
       }
       _navigateToHome();
     } catch (e) {
-      setState(() => _errorMessage = e.toString());
+      setState(() => _errorMessage = _getFriendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -70,7 +93,7 @@ class _DualAuthScreenState extends State<DualAuthScreen> {
         _navigateToHome();
       }
     } catch (e) {
-      setState(() => _errorMessage = e.toString());
+      setState(() => _errorMessage = _getFriendlyErrorMessage(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

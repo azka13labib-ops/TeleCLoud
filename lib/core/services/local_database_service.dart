@@ -137,9 +137,22 @@ class LocalDatabaseService {
     return results.map(FolderModel.fromSqlite).toList();
   }
 
+  Future<void> updateFolder(FolderModel folder) async {
+    final db = await database;
+    await db.update(
+      tableFolders,
+      folder.toSqlite(),
+      where: 'id = ?',
+      whereArgs: [folder.id],
+    );
+  }
+
   Future<void> deleteCachedFolder(String folderId) async {
     final db = await database;
     await db.delete(tableFolders, where: 'id = ?', whereArgs: [folderId]);
+    // Also delete any subfolders or files whose parent_id/folder_id is folderId
+    await db.delete(tableFiles, where: 'folder_id = ?', whereArgs: [folderId]);
+    await db.delete(tableFolders, where: 'parent_id = ?', whereArgs: [folderId]);
   }
 
   // --- File Cache Operations ---
@@ -155,6 +168,26 @@ class LocalDatabaseService {
       );
     }
     await batch.commit(noResult: true);
+  }
+
+  Future<void> updateFile(FileModel file) async {
+    final db = await database;
+    await db.update(
+      tableFiles,
+      file.toSqlite(),
+      where: 'id = ?',
+      whereArgs: [file.id],
+    );
+  }
+
+  Future<List<FileModel>> getAllUserFiles(String userId) async {
+    final db = await database;
+    final results = await db.query(
+      tableFiles,
+      where: 'user_id = ?',
+      whereArgs: [userId],
+    );
+    return results.map(FileModel.fromSqlite).toList();
   }
 
   Future<List<FileModel>> getCachedFiles({
