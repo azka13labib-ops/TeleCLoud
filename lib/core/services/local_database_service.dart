@@ -39,7 +39,6 @@ class LocalDatabaseService {
         ''');
       },
       onCreate: (db, version) async {
-        // Table for Folders
         await db.execute('''
           CREATE TABLE $tableFolders (
             id TEXT PRIMARY KEY,
@@ -50,7 +49,6 @@ class LocalDatabaseService {
           )
         ''');
 
-        // Table for Files
         await db.execute('''
           CREATE TABLE $tableFiles (
             id TEXT PRIMARY KEY,
@@ -64,7 +62,6 @@ class LocalDatabaseService {
           )
         ''');
 
-        // Indexes for fast hierarchy queries
         await db.execute('CREATE INDEX idx_folders_parent ON $tableFolders (parent_id, user_id)');
         await db.execute('CREATE INDEX idx_files_folder ON $tableFiles (folder_id, user_id)');
       },
@@ -137,20 +134,19 @@ class LocalDatabaseService {
     return results.map(FolderModel.fromSqlite).toList();
   }
 
-  Future<void> updateFolder(FolderModel folder) async {
+  Future<void> updateFolderName(String folderId, String newName) async {
     final db = await database;
     await db.update(
       tableFolders,
-      folder.toSqlite(),
+      {'name': newName},
       where: 'id = ?',
-      whereArgs: [folder.id],
+      whereArgs: [folderId],
     );
   }
 
   Future<void> deleteCachedFolder(String folderId) async {
     final db = await database;
     await db.delete(tableFolders, where: 'id = ?', whereArgs: [folderId]);
-    // Also delete any subfolders or files whose parent_id/folder_id is folderId
     await db.delete(tableFiles, where: 'folder_id = ?', whereArgs: [folderId]);
     await db.delete(tableFolders, where: 'parent_id = ?', whereArgs: [folderId]);
   }
@@ -170,13 +166,23 @@ class LocalDatabaseService {
     await batch.commit(noResult: true);
   }
 
-  Future<void> updateFile(FileModel file) async {
+  Future<void> updateFileName(String fileId, String newName) async {
     final db = await database;
     await db.update(
       tableFiles,
-      file.toSqlite(),
+      {'filename': newName},
       where: 'id = ?',
-      whereArgs: [file.id],
+      whereArgs: [fileId],
+    );
+  }
+
+  Future<void> updateFileFolder(String fileId, String? newFolderId) async {
+    final db = await database;
+    await db.update(
+      tableFiles,
+      {'folder_id': newFolderId},
+      where: 'id = ?',
+      whereArgs: [fileId],
     );
   }
 
@@ -220,12 +226,4 @@ class LocalDatabaseService {
     final db = await database;
     await db.delete(tableFiles, where: 'id = ?', whereArgs: [fileId]);
   }
-
-  /// Clear all cache for user during logout
-  Future<void> clearUserCache(String userId) async {
-    final db = await database;
-    await db.delete(tableFolders, where: 'user_id = ?', whereArgs: [userId]);
-    await db.delete(tableFiles, where: 'user_id = ?', whereArgs: [userId]);
-  }
 }
-

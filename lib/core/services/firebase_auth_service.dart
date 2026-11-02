@@ -1,14 +1,13 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'firebase_service.dart';
 
 /// Singleton service handling Firebase Authentication (Email/Password & Google Sign-In)
 class FirebaseAuthService {
   FirebaseAuthService._();
   static final FirebaseAuthService instance = FirebaseAuthService._();
 
-  FirebaseAuth get _auth => FirebaseService.instance.auth;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _isGoogleSignInInitialized = false;
 
@@ -94,20 +93,6 @@ class FirebaseAuthService {
       rethrow;
     } catch (e, stack) {
       debugPrint('[FirebaseAuthService] Unexpected error during Google Sign-In: $e\n$stack');
-      rethrow;
-    }
-  }
-
-  /// Send Password Reset Email
-  Future<void> sendPasswordResetEmail(String email) async {
-    try {
-      await _auth.sendPasswordResetEmail(email: email.trim());
-      debugPrint('[FirebaseAuthService] Password reset email sent to $email');
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[FirebaseAuthService] FirebaseAuthException [${e.code}]: ${e.message}');
-      rethrow;
-    } catch (e) {
-      debugPrint('[FirebaseAuthService] Error sending password reset email: $e');
       rethrow;
     }
   }

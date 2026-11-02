@@ -169,13 +169,6 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
     return list;
   }
 
-  String _formatTotalBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-  }
-
   // --- Folder Management ---
 
   Future<void> _showCreateFolderDialog() async {
@@ -465,6 +458,15 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
   }
 
   void _showSortModal() {
+    const sortLabels = {
+      SortOption.dateNewest: 'Tanggal Terbaru',
+      SortOption.dateOldest: 'Tanggal Terlama',
+      SortOption.nameAsc: 'Nama File (A - Z)',
+      SortOption.nameDesc: 'Nama File (Z - A)',
+      SortOption.sizeLargest: 'Ukuran Terbesar',
+      SortOption.sizeSmallest: 'Ukuran Terkecil',
+    };
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -478,66 +480,16 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
             children: [
               const Text('Urutkan Berdasarkan', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 12),
-              RadioListTile<SortOption>(
-                title: const Text('Tanggal Terbaru', style: TextStyle(color: Colors.white, fontSize: 13)),
-                value: SortOption.dateNewest,
+              ...sortLabels.entries.map((entry) => RadioListTile<SortOption>(
+                title: Text(entry.value, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                value: entry.key,
                 groupValue: _sortOption,
                 activeColor: AppTheme.accentCyan,
                 onChanged: (val) {
                   setState(() => _sortOption = val!);
                   Navigator.pop(ctx);
                 },
-              ),
-              RadioListTile<SortOption>(
-                title: const Text('Tanggal Terlama', style: TextStyle(color: Colors.white, fontSize: 13)),
-                value: SortOption.dateOldest,
-                groupValue: _sortOption,
-                activeColor: AppTheme.accentCyan,
-                onChanged: (val) {
-                  setState(() => _sortOption = val!);
-                  Navigator.pop(ctx);
-                },
-              ),
-              RadioListTile<SortOption>(
-                title: const Text('Nama File (A - Z)', style: TextStyle(color: Colors.white, fontSize: 13)),
-                value: SortOption.nameAsc,
-                groupValue: _sortOption,
-                activeColor: AppTheme.accentCyan,
-                onChanged: (val) {
-                  setState(() => _sortOption = val!);
-                  Navigator.pop(ctx);
-                },
-              ),
-              RadioListTile<SortOption>(
-                title: const Text('Nama File (Z - A)', style: TextStyle(color: Colors.white, fontSize: 13)),
-                value: SortOption.nameDesc,
-                groupValue: _sortOption,
-                activeColor: AppTheme.accentCyan,
-                onChanged: (val) {
-                  setState(() => _sortOption = val!);
-                  Navigator.pop(ctx);
-                },
-              ),
-              RadioListTile<SortOption>(
-                title: const Text('Ukuran Terbesar', style: TextStyle(color: Colors.white, fontSize: 13)),
-                value: SortOption.sizeLargest,
-                groupValue: _sortOption,
-                activeColor: AppTheme.accentCyan,
-                onChanged: (val) {
-                  setState(() => _sortOption = val!);
-                  Navigator.pop(ctx);
-                },
-              ),
-              RadioListTile<SortOption>(
-                title: const Text('Ukuran Terkecil', style: TextStyle(color: Colors.white, fontSize: 13)),
-                value: SortOption.sizeSmallest,
-                groupValue: _sortOption,
-                activeColor: AppTheme.accentCyan,
-                onChanged: (val) {
-                  setState(() => _sortOption = val!);
-                  Navigator.pop(ctx);
-                },
-              ),
+              )),
             ],
           ),
         ),
@@ -794,7 +746,7 @@ class _StorageHomeScreenState extends State<StorageHomeScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${_formatTotalBytes(_totalGlobalVaultBytes)} digunakan • Kuota 2GB per file tanpa batas',
+                              '${FileModel.formatBytes(_totalGlobalVaultBytes)} digunakan • Kuota 2GB per file tanpa batas',
                               style: const TextStyle(fontSize: 11, color: AppTheme.subtleText),
                             ),
                           ],

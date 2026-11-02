@@ -89,18 +89,21 @@ class FileModel {
     );
   }
 
-  /// Format file size into human-readable string (e.g. 1.25 MB, 1.80 GB)
-  String get formattedSize {
-    if (size <= 0) return '0 B';
+  /// Format bytes into human-readable string (e.g. 1.25 MB, 1.80 GB)
+  static String formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
     const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
     var i = 0;
-    double s = size.toDouble();
+    double s = bytes.toDouble();
     while (s >= 1024 && i < suffixes.length - 1) {
       s /= 1024;
       i++;
     }
     return '${s.toStringAsFixed(s >= 100 ? 0 : 2)} ${suffixes[i]}';
   }
+
+  /// Format file size into human-readable string
+  String get formattedSize => formatBytes(size);
 
   /// File extension without dot, e.g. "pdf", "jpg"
   String get extension {

@@ -1,12 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../core/services/firebase_service.dart';
 import '../../../core/services/local_database_service.dart';
 import '../domain/models/file_model.dart';
 import '../domain/models/folder_model.dart';
 
 /// Repository managing cloud storage hierarchy and files with offline-first synchronization
 class StorageRepository {
-  final FirebaseFirestore _firestore = FirebaseService.instance.firestore;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final LocalDatabaseService _localDb = LocalDatabaseService.instance;
 
   static const String foldersCollection = 'folders';
@@ -46,14 +45,14 @@ class StorageRepository {
     );
 
     try {
-      Query query = _firestore
+      final snapshot = await _firestore
           .collection(foldersCollection)
           .where('user_id', isEqualTo: userId)
-          .where('parent_id', isEqualTo: parentId);
+          .where('parent_id', isEqualTo: parentId)
+          .get();
 
-      final snapshot = await query.get();
       final freshFolders = snapshot.docs
-          .map((doc) => FolderModel.fromMap(doc.data() as Map<String, dynamic>, doc.id))
+          .map((doc) => FolderModel.fromMap(doc.data(), doc.id))
           .toList();
 
       await _localDb.cacheFolders(freshFolders);
@@ -91,12 +90,7 @@ class StorageRepository {
     await _firestore.collection(foldersCollection).doc(folderId).update({
       'name': newName.trim(),
     });
-
-    final cached = await _localDb.getCachedFolders(userId: userId);
-    final match = cached.where((f) => f.id == folderId).firstOrNull;
-    if (match != null) {
-      await _localDb.updateFolder(match.copyWith(name: newName.trim()));
-    }
+    await _localDb.updateFolderName(folderId, newName.trim());
   }
 
   /// Deletes a folder and all its contents
@@ -104,10 +98,8 @@ class StorageRepository {
     required String folderId,
     required String userId,
   }) async {
-    // 1. Delete folder doc in Firestore
     await _firestore.collection(foldersCollection).doc(folderId).delete();
 
-    // 2. Query child files in Firestore and batch delete
     final childFiles = await _firestore
         .collection(filesCollection)
         .where('folder_id', isEqualTo: folderId)
@@ -120,7 +112,6 @@ class StorageRepository {
     }
     await batch.commit();
 
-    // 3. Delete from local SQLite cache
     await _localDb.deleteCachedFolder(folderId);
   }
 
@@ -164,14 +155,14 @@ class StorageRepository {
     );
 
     try {
-      Query query = _firestore
+      final snapshot = await _firestore
           .collection(filesCollection)
           .where('user_id', isEqualTo: userId)
-          .where('folder_id', isEqualTo: folderId);
+          .where('folder_id', isEqualTo: folderId)
+          .get();
 
-      final snapshot = await query.get();
       final freshFiles = snapshot.docs
-          .map((doc) => FileModel.fromMap(doc.data() as Map<String, dynamic>, doc.id))
+          .map((doc) => FileModel.fromMap(doc.data(), doc.id))
           .toList();
 
       await _localDb.cacheFiles(freshFiles);
@@ -190,12 +181,7 @@ class StorageRepository {
     await _firestore.collection(filesCollection).doc(fileId).update({
       'filename': newName.trim(),
     });
-
-    final cached = await _localDb.getCachedFiles(userId: userId);
-    final match = cached.where((f) => f.id == fileId).firstOrNull;
-    if (match != null) {
-      await _localDb.updateFile(match.copyWith(filename: newName.trim()));
-    }
+    await _localDb.updateFileName(fileId, newName.trim());
   }
 
   /// Moves a file to a new folder (or root if newFolderId is null)
@@ -207,12 +193,7 @@ class StorageRepository {
     await _firestore.collection(filesCollection).doc(fileId).update({
       'folder_id': newFolderId,
     });
-
-    final cached = await _localDb.getCachedFiles(userId: userId);
-    final match = cached.where((f) => f.id == fileId).firstOrNull;
-    if (match != null) {
-      await _localDb.updateFile(match.copyWith(folderId: newFolderId));
-    }
+    await _localDb.updateFileFolder(fileId, newFolderId);
   }
 
   /// Deletes a file record

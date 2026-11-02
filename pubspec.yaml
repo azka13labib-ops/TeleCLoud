@@ -16,24 +16,18 @@ dependencies:
   firebase_auth: ^5.3.1
   cloud_firestore: ^5.4.4
 
-  # Telegram MTProto / TDLib Client (Direct MTProto protocol client for bypassing 50MB Bot API limit)
+  # Telegram MTProto / TDLib Client
   telegram_client: ^0.8.44
 
-  # File Management & Utilities
+  # File Management & Local Caching
   file_picker: ^8.1.3
-  permission_handler: ^11.3.1
   path_provider: ^2.1.4
-  dio: ^5.7.0
-
-  # Local Offline-First Database & Caching
   sqflite: ^2.3.3+2
   path: ^1.9.0
 
-  # UI, Fonts & Glassmorphism Aesthetics
-  glassmorphism: ^3.0.0
+  # UI, Fonts & Auth
   google_fonts: ^6.2.1
   google_sign_in: ^7.2.0
-  handy_tdlib_next: ^2.3.16
 
 dev_dependencies:
   flutter_test:
@@ -42,7 +36,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/icons/
-    - assets/doodles/
-

@@ -1,7 +1,8 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'core/services/firebase_service.dart';
 import 'core/services/telegram_service.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/auth_gate.dart';
@@ -10,10 +11,11 @@ import 'firebase_options.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase before runApp to ensure Auth & Firestore providers are ready
   try {
-    await FirebaseService.instance.initialize(
-      options: DefaultFirebaseOptions.currentPlatform,
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,
+      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
     );
     debugPrint('[Main] Firebase initialized successfully.');
   } catch (e, stack) {

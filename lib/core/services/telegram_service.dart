@@ -81,12 +81,6 @@ class TelegramService {
     }
   }
 
-  /// Sets credentials in-memory
-  static void setCredentials({required int id, required String hash}) {
-    _apiId = id;
-    _apiHash = hash;
-  }
-
   /// Initializes TDLib instance, local database/file storage directories, and authorization stream
   Future<void> initialize({String? userId}) async {
     if (_isInitialized) return;
